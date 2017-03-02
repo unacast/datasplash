@@ -1,4 +1,4 @@
-(defproject org.clojars.unacast/datasplash "0.4.2-unacast"
+(defproject org.clojars.unacast/datasplash "0.4.3-SNAPSHOT"
   :description "Clojure API for a more dynamic Google Cloud Dataflow"
   :url "https://github.com/ngrunwald/datasplash"
   :license {:name "Eclipse Public License"
