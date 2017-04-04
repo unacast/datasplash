@@ -20,14 +20,14 @@
 
 (defn read-datastore-raw
   "Read a datastore source return a pcoll of raw datastore entities"
-  [{:keys [project-id query namespace num-query-split] :as options} pcoll]
+  [{:keys [project-id query namespace num-query-splits] :as options} pcoll]
   (let [opts (assoc options :label :write-datastore)
         ptrans (-> (DatastoreIO/v1)
                    (.read)
                    (.withProjectId project-id)
                    (cond-> query (.withQuery query))
                    (cond-> namespace (.withNamespace namespace))
-                   (cond-> num-query-split (.withNumQuerySplit num-query-split)))]
+                   (cond-> num-query-splits (.withNumQuerySplits num-query-splits)))]
     (apply-transform pcoll ptrans named-schema opts)))
 
 (declare value->clj)
