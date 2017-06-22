@@ -949,8 +949,8 @@ map. Each value will be a list of the values that match key.
          pipeline (Pipeline/create options)
          coder-registry (.getCoderRegistry pipeline)]
      (doto coder-registry
-       (.registerCoder clojure.lang.IPersistentCollection (make-nippy-coder))
-       (.registerCoder clojure.lang.Keyword (make-nippy-coder)))
+       (.registerCoderForClass clojure.lang.IPersistentCollection (make-nippy-coder))
+       (.registerCoderForClass clojure.lang.Keyword (make-nippy-coder)))
      pipeline))
   ([arg1 arg2]
    (if (or (symbol? arg1) (string? arg1))

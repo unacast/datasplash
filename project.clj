@@ -1,4 +1,4 @@
-(defproject SimplyFinServices/datasplash "0.4.3"
+(defproject simplyfinservices/datasplash "0.4.4"
   :description "Clojure API for a more dynamic Google Cloud Dataflow"
   :url "https://github.com/ngrunwald/datasplash"
   :license {:name "Eclipse Public License"
