@@ -9,22 +9,23 @@
             [taoensso.nippy :as nippy]
             [clj-time.coerce :as timc])
   (:import [clojure.lang MapEntry ExceptionInfo]
-           [com.google.cloud.dataflow.sdk Pipeline]
-           [com.google.cloud.dataflow.sdk.coders StringUtf8Coder CustomCoder Coder$Context KvCoder IterableCoder]
-           [com.google.cloud.dataflow.sdk.io
+           [org.apache.beam.sdk Pipeline]
+           [org.apache.beam.sdk.coders StringUtf8Coder CustomCoder Coder$Context KvCoder IterableCoder]
+           [org.apache.beam.sdk.io
             TextIO$Read TextIO$Write TextIO$CompressionType]
-           [com.google.cloud.dataflow.sdk.options PipelineOptionsFactory GcsOptions]
-           [com.google.cloud.dataflow.sdk.transforms
-            DoFn DoFn$Context DoFn$ProcessContext ParDo DoFnTester Create PTransform
-            Partition Partition$PartitionFn IntraBundleParallelization
-            SerializableFunction WithKeys GroupByKey RemoveDuplicates Count
+           [org.apache.beam.sdk.extensions.gcp.options GcsOptions]
+           [org.apache.beam.sdk.options PipelineOptionsFactory]
+           [org.apache.beam.sdk.transforms
+            DoFn DoFn$StartBundleContext DoFn$FinishBundleContext DoFn$ProcessContext ParDo DoFnTester Create PTransform
+            Partition Partition$PartitionFn
+            SerializableFunction WithKeys GroupByKey Distinct Count
             Flatten Combine$CombineFn Combine View View$AsSingleton Sample]
-           [com.google.cloud.dataflow.sdk.transforms.join KeyedPCollectionTuple CoGroupByKey
+           [org.apache.beam.sdk.transforms.join KeyedPCollectionTuple CoGroupByKey
             CoGbkResult$CoGbkResultCoder UnionCoder CoGbkResult]
-           [com.google.cloud.dataflow.sdk.util GcsUtil UserCodeException]
-           [com.google.cloud.dataflow.sdk.util.common Reiterable]
-           [com.google.cloud.dataflow.sdk.util.gcsfs GcsPath]
-           [com.google.cloud.dataflow.sdk.values KV PCollection TupleTag TupleTagList PBegin
+           [org.apache.beam.sdk.util GcsUtil UserCodeException]
+           [org.apache.beam.sdk.util.common Reiterable]
+           [org.apache.beam.sdk.util.gcsfs GcsPath]
+           [org.apache.beam.sdk.values KV PCollection TupleTag TupleTagList PBegin
             PCollectionList PInput PCollectionTuple]
            [java.io InputStream OutputStream DataInputStream DataOutputStream File]
            [java.net URI]
@@ -203,8 +204,8 @@
                     *side-inputs* side-ins
                     *main-output* (when side-outputs (first (sort side-outputs)))]
             (f context)))))
-     (startBundle [^DoFn$Context context] (safe-exec-cfg opts (start-bundle context)))
-     (finishBundle [^DoFn$Context context] (safe-exec-cfg opts (finish-bundle context)))))
+     (startBundle [^DoFn$StartBundleContext context] (safe-exec-cfg opts (start-bundle context)))
+     (finishBundle [^DoFn$FinishBundleContext context] (safe-exec-cfg opts (finish-bundle context)))))
   ([f] (dofn f {})))
 
 (defn context
@@ -395,7 +396,6 @@ See https://cloud.google.com/dataflow/java-sdk/JavaDoc/com/google/cloud/dataflow
 (defrecord GroupSpecs [specs]
   PInput
   (expand [this] (map first specs))
-  (finishSpecifying [this] nil)
   (getPipeline [this] (let [^PInput pval (-> specs (first) (first))]
                         (.getPipeline pval)))
   IApply
@@ -483,14 +483,12 @@ See https://cloud.google.com/dataflow/java-sdk/JavaDoc/com/google/cloud/dataflow
                                                 (TupleTag. (name (first ordered)))
                                                 (TupleTagList/of (map (comp #(TupleTag. %) name)
                                                                       (rest ordered))))))}
-    :without-coercion-to-clj {:docstr "Avoids coercing Dataflow types to Clojure, like KV. Coercion will happen by default"}
-    :intra-bundle-parallelization {:docstr "Adds thread parallelization to a DoFn, with given thread numbers. Only useful ifblocking calls are made. Incompatible with side-inputs or side-outputs. See https://cloud.google.com/dataflow/java-sdk/JavaDoc/com/google/cloud/dataflow/sdk/transforms/IntraBundleParallelization"}}))
+    :without-coercion-to-clj {:docstr "Avoids coercing Dataflow types to Clojure, like KV. Coercion will happen by default"}}))
 
 (defn map-op
   [transform {:keys [isomorph? kv?] :as base-options}]
   (fn make-map-op
-    ([f {:keys [key-coder value-coder coder
-                intra-bundle-parallelization] :as options}
+    ([f {:keys [key-coder value-coder coder] :as options}
       ^PCollection pcoll]
      (let [default-coder (cond
                            isomorph? (.getCoder pcoll)
@@ -501,10 +499,7 @@ See https://cloud.google.com/dataflow/java-sdk/JavaDoc/com/google/cloud/dataflow
                            :else (make-nippy-coder))
            opts (merge (assoc base-options :coder default-coder) options)
            ^DoFn bare-dofn (dofn (transform f) opts)
-           pardo (if intra-bundle-parallelization
-                   (.withMaxParallelism
-                    (IntraBundleParallelization/of bare-dofn) intra-bundle-parallelization)
-                   (ParDo/of bare-dofn))]
+           pardo (ParDo/of bare-dofn)]
        (apply-transform pcoll pardo pardo-schema opts)))
     ([f pcoll] (make-map-op f {} pcoll))))
 
@@ -696,7 +691,7 @@ This function is reminiscent of the reducers api. In has sensible defaults in or
   ([pcoll] (view {} pcoll)))
 
 (defn- to-edn*
-  [^DoFn$Context c]
+  [^DoFn$StartBundleContext c]
   (let [elt (.element c)
         result (pr-str elt)]
     (.output c result)))
@@ -995,7 +990,7 @@ It means the template %A-%U-%T is equivalent to the default jobName"
   ([^Pipeline p]
    (dissoc (bean (.getOptions p)) :class))
   ([]
-   (when-let [^DoFn$Context c *context*]
+   (when-let [^DoFn$StartBundleContext c *context*]
      (-> (.getPipelineOptions c)
          (bean)
          (dissoc :class)))))
@@ -1008,9 +1003,9 @@ It means the template %A-%U-%T is equivalent to the default jobName"
   "Clean filename for transform name building purpose."
   [s]
   (-> s
-      (str/replace #"^\w+:/" "")
+      (str/replace #"^\w+:/" "")))
       ;; (str/replace #"/" "\\")
-      ))
+      
 
 (defn ->options
   [o]
@@ -1095,7 +1090,7 @@ See https://cloud.google.com/dataflow/java-sdk/JavaDoc/com/google/cloud/dataflow
                   (assoc :label (str "write-text-file-to-"
                                      (clean-filename to))
                          :coder nil))]
-     (apply-transform pcoll (TextIO$Write/to to)
+     (apply-transform pcoll (.to TextIO$Write to)
                       (merge named-schema text-writer-schema) opts)))
   ([to pcoll] (write-text-file to {} pcoll)))
 
@@ -1111,14 +1106,10 @@ Example:
           base-schema text-reader-schema)
    :added "0.1.0"}
   ([from options p]
-   (let [opts (assoc options
-                     :coder (or
-                             (:coder options)
-                             (StringUtf8Coder/of)))]
-     (-> p
-         (cond-> (instance? Pipeline p) (PBegin/in))
-         (apply-transform (TextIO$Read/from from)
-                          (merge named-schema text-reader-schema) opts))))
+   (-> p
+       (cond-> (instance? Pipeline p) (PBegin/in))
+       (apply-transform (.from TextIO$Read from)
+                        (merge named-schema text-reader-schema) options)))
   ([from p] (read-text-file from {} p)))
 
 (defn read-edn-file
@@ -1476,7 +1467,7 @@ Example:
                 [pcoll2 (fn [elt] (:foreign-key elt)) {:type :optional}]])
 
 ```
-See https://cloud.google.com/dataflow/java-sdk/JavaDoc/com/google/cloud/dataflow/sdk/transforms/join/CoGroupByKey and for a different approach to joins see [[cogroup-by]]"
+See https://beam.apache.org/documentation/sdks/javadoc/2.0.0/org/apache/beam/sdk/transforms/join/CoGroupByKey.html and for a different approach to joins see [[cogroup-by]]"
           named-schema join-by-schema)
    :added "0.1.0"}
   ([{nam :name :as options} specs join-fn]
@@ -1495,7 +1486,7 @@ See https://cloud.google.com/dataflow/java-sdk/JavaDoc/com/google/cloud/dataflow
                        res (map (fn [prod] (apply clean-join-fn prod)) raw-res)]
                    res))
                {:name (str root-name "-cartesian-product")
-                :without-coercion-to-clj true }))))
+                :without-coercion-to-clj true}))))
   ([options specs] (if (fn? specs)
                      (throw (ex-info "Wrong type of argument for join-by, join-fn is now passed as a :collector key in options" {:specs specs}))
                      (join-by options specs nil))))
@@ -1504,7 +1495,7 @@ See https://cloud.google.com/dataflow/java-sdk/JavaDoc/com/google/cloud/dataflow
   {:doc (with-opts-docstr
           "Removes duplicate element from PCollection.
 
-See https://cloud.google.com/dataflow/java-sdk/JavaDoc/com/google/cloud/dataflow/sdk/transforms/RemoveDuplicates.html
+See https://beam.apache.org/documentation/sdks/javadoc/2.0.0/org/apache/beam/sdk/transforms/Distinct.html
 
 Example:
 ```
@@ -1514,7 +1505,7 @@ Example:
    :added "0.1.0"}
   ([options ^PCollection pcoll]
    (let [opts (assoc options :label :distinct)]
-     (apply-transform pcoll (RemoveDuplicates/create) base-schema opts)))
+     (apply-transform pcoll (Distinct/create) base-schema opts)))
   ([pcoll] (ddistinct {} pcoll)))
 
 (def scoped-ops-schema

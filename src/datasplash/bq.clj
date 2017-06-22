@@ -10,20 +10,20 @@
    [org.codehaus.jackson.map.ObjectMapper]
    [com.google.api.services.bigquery.model
     TableRow TableFieldSchema TableSchema]
-   [com.google.cloud.dataflow.sdk Pipeline]
-   [com.google.cloud.dataflow.sdk.io
+   [org.apache.beam.sdk Pipeline]
+   [org.apache.beam.sdk.io.gcp.bigquery
     BigQueryIO$Read BigQueryIO$Write
     BigQueryIO$Write$WriteDisposition
-    BigQueryIO$Write$CreateDisposition]
-   [com.google.cloud.dataflow.sdk.values PBegin PCollection]
-   [com.google.cloud.dataflow.sdk.coders TableRowJsonCoder]))
+    BigQueryIO$Write$CreateDisposition
+    TableRowJsonCoder]
+   [org.apache.beam.sdk.values PBegin PCollection]))
 
 (defn read-bq-raw
   [{:keys [query table usingStandardSql] :as options} p]
   (let [opts (assoc options :label :read-bq-table-raw)
         ptrans (cond
-                 query (BigQueryIO$Read/fromQuery query)
-                 table (BigQueryIO$Read/from table)
+                 query (.fromQuery BigQueryIO$Read query)
+                 table (.from BigQueryIO$Read table)
                  :else (throw (ex-info
                                "Error with options of read-bq-table, should specify one of :table or :query"
                                {:options options})))]
@@ -188,7 +188,7 @@
 (defn write-bq-table-raw
   ([to options ^PCollection pcoll]
    (let [opts (assoc options :label :write-bq-table-raw)]
-     (apply-transform pcoll (BigQueryIO$Write/to to) write-bq-table-schema opts)))
+     (apply-transform pcoll (.to BigQueryIO$Write to) write-bq-table-schema opts)))
   ([to pcoll] (write-bq-table-raw to {} pcoll)))
 
 (defn- write-bq-table-clj-transform
